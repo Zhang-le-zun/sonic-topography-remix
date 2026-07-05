@@ -15,6 +15,7 @@
 7. [修改设置后壁纸卡死](#7-修改设置后壁纸卡死)
 8. [谱通量节拍检测与频谱指标计算偏差](#8-谱通量节拍检测与频谱指标计算偏差)
 9. [构建缓存与旧 bundle 残留](#9-构建缓存与旧-bundle-残留)
+10. [非 WE 环境黑屏 — 缺少 Wallpaper Engine API Polyfill](#10-非-we-环境黑屏--缺少-wallpaper-engine-api-polyfill)
 
 ---
 
@@ -276,6 +277,70 @@ npm run build
 
 ---
 
+## 10. 非 WE 环境黑屏 — 缺少 Wallpaper Engine API Polyfill
+
+### 现象
+克隆仓库后在浏览器中本地预览或导入 Wallpaper Engine 后画面全黑，但控制台无 JavaScript 运行时错误。
+
+### 根因
+`index.html` 中所有 WE 专用 API（`wallpaperRegisterAudioListener`、`wallpaperRegisterMediaPropertiesListener` 等）的注册都是带条件判断的：
+
+```js
+if (window.wallpaperRegisterAudioListener) {
+  window.wallpaperRegisterAudioListener(function(audioArray) { ... });
+}
+```
+
+在非 Wallpaper Engine 环境（普通浏览器、本地测试）中，这些 API 均不存在，导致：
+1. 所有条件分支静默跳过，没有任何回调被注册
+2. `window.__audioData` 始终为 `null`
+3. rAF 轮询桥接代码得不到有效音频数据
+4. AudioEngine 的 512-bin 频谱全为 0 → Shader uniforms 全 0 → InstancedMesh 顶点位移全 0
+5. 画面呈现为纯黑色背景（背景色 `#000`），实际**场景在渲染但柱子高度为零**
+
+WebGL 诊断确认 shader 已正确编译链接，uniforms 完整，场景节点齐全——只是没有视觉变化。
+
+### 修复
+在 `dist/index.html` 中的 `if (window.wallpaperRegisterAudioListener)` 之前注入 polyfill：
+
+```js
+// ===== WE API Polyfill (for dev/testing outside Wallpaper Engine) =====
+if (!window.wallpaperRegisterAudioListener) {
+  window.wallpaperRegisterAudioListener = function(cb) {
+    window.__we_audioCb = cb;
+  };
+  window.wallpaperRegisterMediaPropertiesListener = function(){};
+  window.wallpaperRegisterMediaThumbnailListener = function(){};
+  window.wallpaperRegisterMediaPlaybackListener = function(){};
+  window.wallpaperRegisterMediaTimelineListener = function(){};
+  window.wallpaperPropertyListener = {
+    applyUserProperties: function(){},
+    applyGeneralProperties: function(){}
+  };
+  window.wallpaperRequestMediaIntegration = function(){};
+  window.wallpaperReady = function(){};
+
+  // Start simulated audio (128-bin FFT)
+  var _simAudio = new Float32Array(128);
+  for (var i = 0; i < 128; i++) _simAudio[i] = Math.random() * 0.5 * (1 - i / 128);
+  window.__audioData = _simAudio;
+
+  setInterval(function() {
+    var arr = new Float32Array(128);
+    for (var i = 0; i < 128; i++) arr[i] = Math.random() * 0.5 * (1 - i / 128);
+    window.__audioData = arr;
+    if (window.__we_audioCb) window.__we_audioCb(arr);
+  }, 50);
+}
+```
+
+### 教训
+1. Wallpaper Engine 网页壁纸的 **全部数据源依赖 WE 宿主注入 API**，本地开发测试必须提供完整的 polyfill
+2. 框架级 `.gitignore` 排除 `src/` 后，问题诊断只能通过 **反编译 bundle.js + 浏览器控制台** 进行，效率极低——应保留源码纳入版本控制
+3. 黑屏不一定是报错导致的，**"场景正常渲染但不产生视觉变化"** 是隐式 bug 的典型特征（全零数据驱动），需要通过 WebGL readPixels 等底层诊断手段才能确认
+
+---
+
 ## 总结
 
 | 类别 | 数量 |
@@ -284,7 +349,7 @@ npm run build
 | 图形学/GPU | 3 |
 | 音视频处理 | 2 |
 | 状态管理/架构 | 1 |
-| 构建/部署 | 2 |
+| 构建/部署 | 3 |
 
 核心经验：
 1. **仿制项目优先反编译原版代码**，公式、参数、架构全部对标

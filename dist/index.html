@@ -42,6 +42,38 @@
       // 音频数据存储
       window.__audioData = null;
 
+      // ===== WE API Polyfill (for dev/testing outside Wallpaper Engine) =====
+      if (!window.wallpaperRegisterAudioListener) {
+        // Simulate WE APIs
+        window.wallpaperRegisterAudioListener = function(cb) {
+          window.__we_audioCb = cb;
+        };
+        window.wallpaperRegisterMediaPropertiesListener = function(){};
+        window.wallpaperRegisterMediaThumbnailListener = function(){};
+        window.wallpaperRegisterMediaPlaybackListener = function(){};
+        window.wallpaperRegisterMediaTimelineListener = function(){};
+        window.wallpaperPropertyListener = {
+          applyUserProperties: function(){},
+          applyGeneralProperties: function(){}
+        };
+        window.wallpaperRequestMediaIntegration = function(){};
+        window.wallpaperReady = function(){};
+
+        // Start simulated audio
+        var _simAudio = new Float32Array(128);
+        for (var i = 0; i < 128; i++) _simAudio[i] = Math.random() * 0.5 * (1 - i / 128);
+        window.__audioData = _simAudio;
+
+        setInterval(function() {
+          var arr = new Float32Array(128);
+          for (var i = 0; i < 128; i++) arr[i] = Math.random() * 0.5 * (1 - i / 128);
+          window.__audioData = arr;
+          if (window.__we_audioCb) window.__we_audioCb(arr);
+        }, 50);
+
+        console.log('[Polyfill] Wallpaper Engine APIs simulated');
+      }
+
       if (window.wallpaperRegisterAudioListener) {
         window.wallpaperRegisterAudioListener(function(audioArray) {
           window.__audioData = audioArray;
@@ -83,7 +115,7 @@
         });
       }
     </script>
-    <script type="module" crossorigin src="./assets/index-CzRHdd5W.js"></script>
+    <script type="module" crossorigin src="./assets/index-fixed.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-B_7wnuFG.css">
   </head>
   <body>
